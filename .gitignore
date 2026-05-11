@@ -1,0 +1,3 @@
+# Ignore all log files generated in the root directory
+*.txt
+.DS_Store

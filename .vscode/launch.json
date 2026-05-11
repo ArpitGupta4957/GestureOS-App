@@ -1,0 +1,28 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "gesture_app_new",
+            "cwd": "gesture_app_new",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "gesture_app_new (profile mode)",
+            "cwd": "gesture_app_new",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "gesture_app_new (release mode)",
+            "cwd": "gesture_app_new",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        }
+    ]
+}
