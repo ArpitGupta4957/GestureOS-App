@@ -125,11 +125,17 @@ class GestureNotifier extends StateNotifier<GestureState> {
 
     try {
       // 1. Sync Deletes First
-      await _syncDeletedGestures();
+      final deletedSyncOk = await _syncDeletedGestures();
+      if (!deletedSyncOk) {
+        print(
+            '⚠️ [ForceSync] Aborted because deleted gesture sync did not complete');
+        state = state.copyWith(isLoading: false);
+        return;
+      }
 
       // 2. Push Pending
       // (Optional for Force Sync, but good practice to clear queue)
-      final pending = await _db.getPendingSync();
+      final pending = await _db.getPendingSync(excludeDeleted: true);
       if (pending.isNotEmpty) {
         print('📤 [ForceSync] Pushing ${pending.length} pending gestures...');
         final payload = pending.map((g) => g.toJson()).toList();
@@ -151,6 +157,11 @@ class GestureNotifier extends StateNotifier<GestureState> {
           );
         } else {
           print('❌ [ForceSync] Push FAILED: ${pushResponse.message}');
+          state = state.copyWith(
+            isLoading: false,
+            error: 'Failed to sync gestures: ${pushResponse.message}',
+          );
+          return;
         }
       } else {
         print('ℹ️ [ForceSync] No pending items to push');
@@ -171,7 +182,10 @@ class GestureNotifier extends StateNotifier<GestureState> {
         OverlayService.updateGestures(freshGestures);
       } else {
         print('❌ [GestureProvider] Pull failed: ${pullResponse.message}');
-        state = state.copyWith(isLoading: false);
+        state = state.copyWith(
+          isLoading: false,
+          error: 'Failed to refresh gestures: ${pullResponse.message}',
+        );
       }
     } catch (e) {
       print('❌ [GestureProvider] Force sync error: $e');
@@ -189,16 +203,22 @@ class GestureNotifier extends StateNotifier<GestureState> {
     }
 
     if (state.isSyncing) return; // Prevent concurrent syncs
-    // state = state.copyWith(isSyncing: true); // Optional: show spinner? Maybe just silent.
+    state = state.copyWith(isSyncing: true);
 
     try {
       print("🔄 [Sync] Starting Background Sync...");
 
       // 0. SYNC DELETES FIRST - Before push/pull
-      await _syncDeletedGestures();
+      final deletedSyncOk = await _syncDeletedGestures();
+      if (!deletedSyncOk) {
+        print(
+            '⚠️ [Sync] Aborting sync because deleted gesture sync did not complete');
+        state = state.copyWith(isSyncing: false);
+        return;
+      }
 
-      // 1. PUSH: Get pending items
-      final pending = await _db.getPendingSync();
+      // 1. PUSH: Get pending items (exclude soft deleted gestures)
+      final pending = await _db.getPendingSync(excludeDeleted: true);
       if (pending.isNotEmpty) {
         print("📤 [Sync] Pushing ${pending.length} local changes...");
         final payload = pending.map((g) => g.toJson()).toList();
@@ -216,44 +236,32 @@ class GestureNotifier extends StateNotifier<GestureState> {
           // Server might return IDs. For V1 simple sync, we just mark as synced.
           // Ideally we parse response to get server IDs and map them back to UUIDs.
           for (var g in pending) {
-            // We assume success means they are saved.
-            // Ideally we update server_id if API returns it.
-            // For now, mark as synced.
             await _db.markAsSynced(g.uuid);
           }
           print("✅ [Sync] Push Complete.");
         } else {
           print("⚠️ [Sync] Push Failed: ${response.message}");
+          state = state.copyWith(
+            isSyncing: false,
+            error: 'Failed to sync gestures: ${response.message}',
+          );
+          return;
         }
+      } else {
+        print("ℹ️ [Sync] No pending items to push");
       }
 
-      // 2. PULL: Get latest from server
-      // For V1, we just get ALL and upsert. inefficient but safe.
       print("📥 [Sync] Pulling latest data...");
       final pullResponse = await _apiService.getGestures();
-
-      // DEBUG: Full API response
-      print(
-        "📥 [Sync] API Response: success=${pullResponse.success}, msg=${pullResponse.message}",
-      );
-      print("📥 [Sync] API Data: ${pullResponse.data}");
-
       if (pullResponse.success && pullResponse.data != null) {
-        print(
-          "🔍 [Sync] Response Data Keys: ${pullResponse.data!.keys.toList()}",
-        );
-        // Check if gestures key exists
-        if (!pullResponse.data!.containsKey('gestures')) {
-          print("❌ [Sync] 'gestures' key MISSING in response data!");
-          // Try to see if it's nested differently or just print raw data summary
-          print("   -> Data: ${pullResponse.data}");
-        }
         final serverList = pullResponse.data!['gestures'] as List;
         print("📥 [Sync] Server returned ${serverList.length} gestures");
         await _db.upsertFromServer(serverList);
         print("✅ [Sync] Pull Complete (${serverList.length} items).");
       } else {
-        print("❌ [Sync] Pull FAILED or data is null: ${pullResponse.message}");
+        print("❌ [Sync] Pull FAILED: ${pullResponse.message}");
+        state = state.copyWith(
+            error: 'Failed to refresh gestures: ${pullResponse.message}');
       }
 
       // 3. RELOAD UI
@@ -313,16 +321,18 @@ class GestureNotifier extends StateNotifier<GestureState> {
   Future<bool> deleteGesture(String uuid) async {
     try {
       // 1. Soft delete locally (marks is_deleted=1, needs_sync=1)
-      await _db.softDeleteGesture(uuid);
-      print("🗑️ [Offline] Soft deleted $uuid locally");
+      final rows = await _db.softDeleteGesture(uuid);
+      if (rows == 0) {
+        print(
+            '⚠️ [GestureProvider] No local gesture found to delete for uuid=$uuid');
+      }
+      print("🗑️ [Offline] Soft deleted $uuid locally ($rows row(s) affected)");
 
-      // 3. Update UI Local State immediately (Optimistic)
-      final updatedGestures = state.gestures
-          .where((g) => g.uuid != uuid)
-          .toList();
+      // 2. Reload local gesture state from DB so UI always matches persistent storage.
+      final updatedGestures = await _db.getAllGestures();
       state = state.copyWith(gestures: updatedGestures);
 
-      // Update Native Overlay (Fire and Forget)
+      // 3. Update Native Overlay (Fire and Forget)
       OverlayService.updateGestures(updatedGestures);
 
       // 4. Sync delete to server in background
@@ -339,14 +349,16 @@ class GestureNotifier extends StateNotifier<GestureState> {
   }
 
   /// Background sync for deleted gestures
-  Future<void> _syncDeletedGestures() async {
+  Future<bool> _syncDeletedGestures() async {
     try {
       final deletedGestures = await _db.getDeletedGestures();
-      if (deletedGestures.isEmpty) return;
+      if (deletedGestures.isEmpty) return true;
 
       print(
         "🔄 [Sync] Found ${deletedGestures.length} deleted gestures to sync",
       );
+
+      var allDeletesSynced = true;
 
       for (var gesture in deletedGestures) {
         print(
@@ -354,34 +366,33 @@ class GestureNotifier extends StateNotifier<GestureState> {
         );
         if (gesture.id != null) {
           // Has server ID - need to delete from server
-          try {
-            print("📤 [Sync] DELETE /gestures/${gesture.id}...");
-            final response = await _apiService.dio.delete(
-              '/gestures/${gesture.id}',
-            );
-            print("📥 [Sync] Response code: ${response.statusCode}");
-            if (response.statusCode == 200) {
-              // Server confirmed deletion - permanently remove locally
-              await _db.permanentlyDelete(gesture.uuid);
-              print("✅ [Sync] Deleted ${gesture.name} from server");
-            }
-          } catch (e) {
-            // If 404 Not Found, it's already deleted on server. Treat as success.
-            // Using dynamic for safer access if DioException not locally visible
-            final is404 =
-                e.toString().contains("404") ||
-                ((e as dynamic).response?.statusCode == 404);
+          final response = await _apiService.deleteGesture(gesture.id!);
+          print(
+              "📥 [Sync] DELETE response: success=${response.success}, msg=${response.message}");
 
-            if (is404) {
-              print(
-                "⚠️ [Sync] Server returned 404 (Already Deleted). Cleaning up locally.",
-              );
-              await _db.permanentlyDelete(gesture.uuid);
-            } else {
-              // Server unreachable/error - will retry on next sync
-              print("⚠️ [Sync] Failed to delete ${gesture.name}: $e");
-            }
+          if (response.success) {
+            await _db.permanentlyDelete(gesture.uuid);
+            print("✅ [Sync] Deleted ${gesture.name} from server");
+            continue;
           }
+
+          if (response.message.toLowerCase().contains('not found') ||
+              response.message.toLowerCase().contains('404')) {
+            print(
+              "⚠️ [Sync] Server returned not found for ${gesture.name}. Cleaning up locally.",
+            );
+            await _db.permanentlyDelete(gesture.uuid);
+            continue;
+          }
+
+          // Keep local deleted record to retry later and surface error
+          state = state.copyWith(
+            error:
+                'Failed to sync deleted gesture "${gesture.name}": ${response.message}',
+          );
+          print(
+              "⚠️ [Sync] Failed to delete ${gesture.name}: ${response.message}");
+          allDeletesSynced = false;
         } else {
           // Never synced to server - just delete locally
           await _db.permanentlyDelete(gesture.uuid);
@@ -390,8 +401,14 @@ class GestureNotifier extends StateNotifier<GestureState> {
           );
         }
       }
+
+      return allDeletesSynced;
     } catch (e) {
       print("❌ [Sync] Error syncing deleted gestures: $e");
+      state = state.copyWith(
+        error: 'Error syncing deleted gestures: $e',
+      );
+      return false;
     }
   }
 
@@ -400,9 +417,8 @@ class GestureNotifier extends StateNotifier<GestureState> {
     // Validation: Max 4 Favorites
     if (updatedGesture.isFavorite) {
       // Calculate active favorites, EXCLUDING the one being updated (to allow self-updates)
-      final activeFavorites = state.gestures
-          .where((g) => g.isFavorite && g.uuid != uuid)
-          .length;
+      final activeFavorites =
+          state.gestures.where((g) => g.isFavorite && g.uuid != uuid).length;
 
       if (activeFavorites >= 4) {
         state = state.copyWith(

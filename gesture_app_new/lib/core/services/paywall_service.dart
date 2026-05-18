@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gesture_app/core/services/subscription_service.dart';
 import 'package:gesture_app/core/providers/auth_provider.dart';
+import 'package:gesture_app/core/services/iap_service.dart';
 import 'package:gesture_app/core/api/api_config.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -116,16 +118,38 @@ class _PaywallContent extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 24),
-          _buildPlanCard(context, ref, "Pro", "₹199 / month", 1, [
-            "Unlimited Features",
-            "Priority Support",
+          _buildPlanCard(context, ref, "Basic (Auto-Renewing)", "₹130 / month", 1, [
+            "Unlimited Gestures",
+            "No Ads",
           ]),
           const SizedBox(height: 16),
-          _buildPlanCard(context, ref, "Business", "₹499 / month", 2, [
-            "All Features + Team",
-            "API Access",
+          _buildPlanCard(context, ref, "Premium (Auto-Renewing)", "₹649 / month", 3, [
+            "All Basic Features",
+            "Bulk Dialer Access",
           ]),
+          const SizedBox(height: 16),
+          _buildLegalFooter(context),
           const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLegalFooter(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        children: [
+          TextButton(
+            onPressed: () => launchUrl(Uri.parse('https://servermine.com/privacy')),
+            child: const Text('Privacy Policy', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ),
+          const Text('•', style: TextStyle(color: Colors.grey, height: 2.5)),
+          TextButton(
+            onPressed: () => launchUrl(Uri.parse('https://servermine.com/terms')),
+            child: const Text('Terms of Use (EULA)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ),
         ],
       ),
     );
@@ -149,13 +173,33 @@ class _PaywallContent extends ConsumerWidget {
       return;
     }
 
-    final url = '${ApiConfig.baseUrl}/subscribe/$planId?token=$token';
     Navigator.pop(context); // Close the bottom sheet first
+
+    if (Platform.isIOS) {
+      try {
+        String productId = 'com.gesture.basic130';
+        if (planId == 1) productId = 'com.gesture.basic130';
+        else if (planId == 2) productId = 'com.gesture.standard299';
+        else if (planId == 3) productId = 'com.gesture.premium649';
+        else if (planId == 4) productId = 'com.gesture.ultimate1299';
+        
+        await ref.read(iapServiceProvider).buyPlan(productId);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Purchase failed: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+      return;
+    }
+
+    final url = '${ApiConfig.baseUrl}/subscribe/$planId?token=$token';
 
     try {
       final uri = Uri.parse(url);
       if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
       } else {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

@@ -11,6 +11,7 @@ import 'package:gesture_app/core/services/overlay_service.dart';
 import 'package:android_intent_plus/android_intent.dart';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -444,6 +445,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                 ],
               );
             },
+          ),
+          _SettingsTile(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Privacy Policy',
+            subtitle: 'Read our privacy policy',
+            onTap: () => launchUrl(Uri.parse('https://servermine.com/privacy')),
+          ),
+          _SettingsTile(
+            icon: Icons.description_outlined,
+            title: 'Terms of Use (EULA)',
+            subtitle: 'Read our terms and conditions',
+            onTap: () => launchUrl(Uri.parse('https://servermine.com/terms')),
           ),
           _SettingsTile(
             icon: Icons.logout_rounded,

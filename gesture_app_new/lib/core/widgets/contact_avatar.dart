@@ -47,12 +47,28 @@ class ContactAvatar extends StatelessWidget {
     );
   }
 
-  Future<ImageProvider?> _getAvatarProvider() async {
+  static final Map<String, Future<ImageProvider?>> _avatarCache = {};
+
+  Future<ImageProvider?> _getAvatarProvider() {
+    final cacheKey = '${contactId ?? ''}_${phoneNumber ?? ''}_${localPhotoPath ?? ''}';
+    if (cacheKey == '__') return Future.value(null);
+
+    if (_avatarCache.containsKey(cacheKey)) {
+      return _avatarCache[cacheKey]!;
+    }
+
+    final future = _loadAvatar();
+    _avatarCache[cacheKey] = future;
+    return future;
+  }
+
+  Future<ImageProvider?> _loadAvatar() async {
     // 1. Try local explicitly picked image path
     if (localPhotoPath != null && localPhotoPath!.isNotEmpty) {
       final file = File(localPhotoPath!);
       if (await file.exists()) {
-        return FileImage(file);
+        final bytes = await file.readAsBytes();
+        return MemoryImage(bytes);
       }
     }
 
@@ -62,12 +78,14 @@ class ContactAvatar extends StatelessWidget {
       if (uri.startsWith('file://')) {
         final file = File(Uri.parse(uri).toFilePath());
         if (await file.exists()) {
-          return FileImage(file);
+          final bytes = await file.readAsBytes();
+          return MemoryImage(bytes);
         }
       } else {
         final file = File(uri);
         if (await file.exists()) {
-          return FileImage(file);
+          final bytes = await file.readAsBytes();
+          return MemoryImage(bytes);
         }
       }
     }

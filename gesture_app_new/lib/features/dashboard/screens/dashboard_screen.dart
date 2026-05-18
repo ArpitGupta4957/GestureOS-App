@@ -391,11 +391,50 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         ),
                       ],
                       if (gestureState.error != null)
-                        const SizedBox(
-                          height: 16,
-                        ), // Just some spacing if needed, or remove completely.
-                      // User requested to REMOVE the red offline chip and retry button.
-                      // Leaving it effectively empty or just the spacer.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 12),
+                          child: Card(
+                            color: theme.colorScheme.errorContainer,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    Icons.error_outline,
+                                    color: theme.colorScheme.error,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      gestureState.error!,
+                                      style:
+                                          theme.textTheme.bodyMedium?.copyWith(
+                                        color:
+                                            theme.colorScheme.onErrorContainer,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.close,
+                                      color: theme.colorScheme.onErrorContainer,
+                                    ),
+                                    onPressed: () {
+                                      ref
+                                          .read(gestureProvider.notifier)
+                                          .clearError();
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 )
@@ -405,7 +444,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     crossAxisCount: 2,
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
-                    childAspectRatio: 0.9,
+                    childAspectRatio: 0.85,
                   ),
                   itemCount: gestureState.gestures.length,
                   itemBuilder: (context, index) {
@@ -653,12 +692,14 @@ class _GestureCard extends StatelessWidget {
     final alias = triggerText?.trim() ?? '';
 
     return Card(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: SizedBox.expand(
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
+            mainAxisSize: MainAxisSize.max,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               // Header: Sync Status & Menu
@@ -771,27 +812,35 @@ class _GestureCard extends StatelessWidget {
                 ],
               ),
 
-              if (actionType.toLowerCase() == 'call' && actionValue.isNotEmpty)
-                ContactAvatar(
-                  fallbackName: displayName.isNotEmpty ? displayName : '?',
-                  localPhotoPath: localPhotoPath,
-                  contactId: contactId,
-                  phoneNumber: actionValue,
-                  radius: 20,
-                )
-              else
-                Icon(icon, size: 36, color: theme.colorScheme.primary),
+              Expanded(
+                child: Center(
+                  child: actionType.toLowerCase() == 'call' &&
+                          actionValue.isNotEmpty
+                      ? ContactAvatar(
+                          fallbackName:
+                              displayName.isNotEmpty ? displayName : '?',
+                          localPhotoPath: localPhotoPath,
+                          contactId: contactId,
+                          phoneNumber: actionValue,
+                          radius: 20,
+                        )
+                      : Icon(icon, size: 36, color: theme.colorScheme.primary),
+                ),
+              ),
 
               // Display name only. Alias is shown in header between star and menu.
-              Text(
-                displayName,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w600,
+              Flexible(
+                child: Text(
+                  displayName,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontSize: 22,
+                    height: 1.2,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
               ),
 
               // Action Type
@@ -819,6 +868,6 @@ class _GestureCard extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 }

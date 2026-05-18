@@ -309,9 +309,13 @@ class DatabaseHelper {
   // --- Sync Helpers ---
 
   /// Get pending uploads
-  Future<List<GestureModel>> getPendingSync() async {
+  Future<List<GestureModel>> getPendingSync(
+      {bool excludeDeleted = false}) async {
     final db = await database;
-    final maps = await db.query('gestures', where: 'needs_sync = 1');
+    final whereClause = excludeDeleted
+        ? 'needs_sync = 1 AND (is_deleted = 0 OR is_deleted IS NULL)'
+        : 'needs_sync = 1';
+    final maps = await db.query('gestures', where: whereClause);
     return maps.map((e) => GestureModel.fromJson(e)).toList();
   }
 
@@ -411,6 +415,11 @@ class DatabaseHelper {
           print("💾 [Sync] Saving pre-encoded points for '${item['name']}'");
         }
 
+        // PRESERVE LOCAL-ONLY FIELDS (Server doesn't always echo these back, and replace wipes them)
+        final preserveContactId = localRecord != null ? localRecord['contact_id'] : item['contact_id'];
+        final preservePhotoUri = localRecord != null ? localRecord['photo_uri'] : item['photo_uri'];
+        final preserveLocalPhotoPath = localRecord != null ? localRecord['local_photo_path'] : item['local_photo_path'];
+
         Map<String, dynamic> row = {
           'uuid': uuid,
           'id': item['id'],
@@ -420,6 +429,9 @@ class DatabaseHelper {
           'trigger_text': item['trigger_text'] ?? item['trigger'],
           'action_type': item['action_type'],
           'action_value': item['action_value'],
+          'contact_id': preserveContactId,
+          'photo_uri': preservePhotoUri,
+          'local_photo_path': preserveLocalPhotoPath,
           'is_favorite': item['is_favorite'] == true ? 1 : 0,
           'created_at': item['created_at'],
           'updated_at': item['updated_at'],
@@ -460,12 +472,15 @@ class DatabaseHelper {
       await db.update('bulk_sessions', {'is_active': 0});
     }
 
-    await db.insert('bulk_sessions', {
-      'id': session.id,
-      'name': session.name,
-      'created_at': session.createdAt,
-      'is_active': isActive ? 1 : 0,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'bulk_sessions',
+        {
+          'id': session.id,
+          'name': session.name,
+          'created_at': session.createdAt,
+          'is_active': isActive ? 1 : 0,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Get Last Active Session
@@ -498,15 +513,18 @@ class DatabaseHelper {
     final batch = db.batch();
 
     for (var n in numbers) {
-      batch.insert('bulk_numbers', {
-        'id': n.id,
-        'session_id': sessionId, // Use passed ID to be safe
-        'phone_number': n.phoneNumber,
-        'name': n.name,
-        'notes': n.notes,
-        'status': n.status.name,
-        'last_called_at': n.lastCalledAt?.toIso8601String(),
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      batch.insert(
+          'bulk_numbers',
+          {
+            'id': n.id,
+            'session_id': sessionId, // Use passed ID to be safe
+            'phone_number': n.phoneNumber,
+            'name': n.name,
+            'notes': n.notes,
+            'status': n.status.name,
+            'last_called_at': n.lastCalledAt?.toIso8601String(),
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
   }

@@ -108,26 +108,6 @@ class _GuidedPermissionDialogState extends State<GuidedPermissionDialog> {
                   Row(
                     children: [
                       Expanded(
-                        child: OutlinedButton(
-                          onPressed: _isRequesting
-                              ? null
-                              : () => Navigator.of(context).pop(false),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            side: BorderSide(
-                              color: theme.colorScheme.primary.withValues(
-                                alpha: 0.5,
-                              ),
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: const Text('SKIP'),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
                         child: ElevatedButton(
                           onPressed: _isRequesting
                               ? null
@@ -149,7 +129,7 @@ class _GuidedPermissionDialogState extends State<GuidedPermissionDialog> {
                                     color: Colors.white,
                                   ),
                                 )
-                              : const Text('ALLOW'),
+                              : const Text('CONTINUE'),
                         ),
                       ),
                     ],
