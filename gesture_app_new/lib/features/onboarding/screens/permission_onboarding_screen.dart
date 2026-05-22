@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gesture_app/core/utils/permission_manager.dart';
 import 'package:gesture_app/core/widgets/guided_permission_dialog.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PermissionOnboardingScreen extends StatefulWidget {
   const PermissionOnboardingScreen({super.key});
@@ -16,6 +17,11 @@ class _PermissionOnboardingScreenState
   final PageController _pageController = PageController();
   int _currentPage = 0;
   final bool _isRequesting = false;
+
+  // permission checklist state
+  bool _showPermissionList = false;
+  bool _loadingStatuses = false;
+  final Map<AppPermission, bool> _statuses = {};
 
   final List<_OnboardingPage> _pages = [
     _OnboardingPage(
@@ -47,34 +53,61 @@ class _PermissionOnboardingScreenState
         curve: Curves.easeInOut,
       );
     } else {
-      // Start guided permissions flow
-      _startGuidedPermissions();
+      // Show permission checklist first
+      setState(() => _showPermissionList = true);
+      _loadPermissionStatuses();
     }
   }
 
-  Future<void> _startGuidedPermissions() async {
-    final permissions = AppPermission.values.toList();
-
-    for (final permission in permissions) {
-      // Check if already granted
-      final isGranted = await PermissionManager.hasPermission(permission);
-      if (isGranted) continue;
-
-      // Show dialog for this specific permission
-      await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => GuidedPermissionDialog(permission: permission),
-      );
-
-      // If user clicked skip (result == false) or just closed, we continue to next
-      // If user granted (result == true), we also continue to next
+  Future<void> _loadPermissionStatuses() async {
+    setState(() => _loadingStatuses = true);
+    final statuses = <AppPermission, bool>{};
+    for (final p in AppPermission.values) {
+      statuses[p] = await PermissionManager.hasPermission(p);
     }
-
-    // After all popups, check if we can proceed
     if (mounted) {
-      context.go('/dashboard');
+      setState(() {
+        _statuses.clear();
+        _statuses.addAll(statuses);
+        _loadingStatuses = false;
+      });
     }
+  }
+
+  Future<void> _requestPermission(AppPermission permission) async {
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => GuidedPermissionDialog(permission: permission),
+    );
+
+    // After dialog, refresh status
+    final granted = await PermissionManager.hasPermission(permission);
+    if (mounted) setState(() => _statuses[permission] = granted);
+  }
+
+  Future<void> _requestAll() async {
+    setState(() => _loadingStatuses = true);
+    for (final p in AppPermission.values) {
+      final already = _statuses[p] ?? false;
+      if (!already) {
+        await _requestPermission(p);
+      }
+    }
+    if (mounted) setState(() => _loadingStatuses = false);
+  }
+
+  Future<void> _skipPermissions() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('seen_permissions', true);
+    await prefs.setBool('permissions_skipped', true);
+    if (mounted) context.go('/dashboard');
+  }
+
+  Future<void> _finishPermissions() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('seen_permissions', true);
+    if (mounted) context.go('/dashboard');
   }
 
   @override
@@ -91,79 +124,165 @@ class _PermissionOnboardingScreenState
           ),
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              // Page Indicator
-              Padding(
-                padding: const EdgeInsets.all(24),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(
-                    _pages.length,
-                    (index) => Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      width: _currentPage == index ? 32 : 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: _currentPage == index
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.primary.withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(4),
+          child: _showPermissionList
+              ? Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Text(
+                        'Permissions',
+                        style: theme.textTheme.headlineLarge?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              ),
+                    Expanded(
+                      child: _loadingStatuses
+                          ? const Center(child: CircularProgressIndicator())
+                          : ListView.builder(
+                              padding: const EdgeInsets.all(16),
+                              itemCount: AppPermission.values.length,
+                              itemBuilder: (context, index) {
+                                final permission = AppPermission.values[index];
+                                final granted = _statuses[permission] ?? false;
+                                return Card(
+                                  child: ListTile(
+                                    leading: Icon(
+                                      PermissionManager.getPermissionIcon(
+                                          permission),
+                                      color: granted
+                                          ? Colors.green
+                                          : theme.colorScheme.primary,
+                                    ),
+                                    title: Text(
+                                      PermissionManager.getPermissionName(
+                                          permission),
+                                    ),
+                                    subtitle: Text(
+                                      PermissionManager
+                                          .getPermissionDescription(permission),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    trailing: granted
+                                        ? const Icon(Icons.check_circle,
+                                            color: Colors.green)
+                                        : TextButton(
+                                            onPressed: () =>
+                                                _requestPermission(permission),
+                                            child: const Text('Grant'),
+                                          ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _loadingStatuses ? null : _requestAll,
+                              child: const Text('Request All'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed:
+                                  _loadingStatuses ? null : _skipPermissions,
+                              child: const Text('Skip'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed:
+                                  _loadingStatuses ? null : _finishPermissions,
+                              child: const Text('Done'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                )
+              : Column(
+                  children: [
+                    // Page Indicator
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(
+                          _pages.length,
+                          (index) => Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            width: _currentPage == index ? 32 : 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: _currentPage == index
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.primary.withOpacity(0.3),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
 
-              // PageView
-              Expanded(
-                child: PageView.builder(
-                  controller: _pageController,
-                  onPageChanged: (index) {
-                    setState(() {
-                      _currentPage = index;
-                    });
-                  },
-                  itemCount: _pages.length,
-                  itemBuilder: (context, index) {
-                    final page = _pages[index];
-                    return _OnboardingPageWidget(page: page);
-                  },
-                ),
-              ),
+                    // PageView
+                    Expanded(
+                      child: PageView.builder(
+                        controller: _pageController,
+                        onPageChanged: (index) {
+                          setState(() {
+                            _currentPage = index;
+                          });
+                        },
+                        itemCount: _pages.length,
+                        itemBuilder: (context, index) {
+                          final page = _pages[index];
+                          return _OnboardingPageWidget(page: page);
+                        },
+                      ),
+                    ),
 
-              // Continue Button
-              Padding(
-                padding: const EdgeInsets.all(32),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _isRequesting ? null : _nextPage,
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      backgroundColor: theme.colorScheme.primary,
-                      foregroundColor: theme.colorScheme.onPrimary,
-                      elevation: 8,
-                      shadowColor: theme.colorScheme.primary.withOpacity(0.5),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                    // Continue Button
+                    Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _isRequesting ? null : _nextPage,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            backgroundColor: theme.colorScheme.primary,
+                            foregroundColor: theme.colorScheme.onPrimary,
+                            elevation: 8,
+                            shadowColor:
+                                theme.colorScheme.primary.withOpacity(0.5),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            _currentPage == _pages.length - 1
+                                ? 'GET STARTED'
+                                : 'CONTINUE',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.5,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                    child: Text(
-                      _currentPage == _pages.length - 1
-                          ? 'GET STARTED'
-                          : 'CONTINUE',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                  ),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );

@@ -1377,6 +1377,8 @@ class _RecognitionDelaySliderState extends State<_RecognitionDelaySlider> {
               : Colors.grey.shade300,
           onChanged: (val) {
             setState(() => _currentValue = val);
+          },
+          onChangeEnd: (val) {
             OverlayService.setRecognitionDelay(val.toInt());
           },
         ),
@@ -1450,6 +1452,8 @@ class _ActionDelaySliderState extends State<_ActionDelaySlider> {
               : Colors.grey.shade300,
           onChanged: (val) {
             setState(() => _currentValue = val);
+          },
+          onChangeEnd: (val) {
             // Convert seconds to ms for service
             OverlayService.setActionDelay((val * 1000).toInt());
           },

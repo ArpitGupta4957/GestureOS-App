@@ -38,7 +38,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     });
     _checkServiceStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAllPermissions();
       // Initialize iOS Triggers safely
       IosTriggerService.initialize(context);
     });
@@ -58,65 +57,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     setState(() {
       _isOverlayActive = isRunningVal;
     });
-  }
-
-  Future<void> _checkAllPermissions() async {
-    // 1. Standard Permissions (cross-platform)
-    await [
-      Permission.phone,
-      Permission.contacts,
-      Permission.camera, // For Flashlight
-    ].request();
-
-    // Android-only permissions
-    if (Platform.isAndroid) {
-      // 2. Overlay Permission
-      if (!await Permission.systemAlertWindow.isGranted) {
-        await Permission.systemAlertWindow.request();
-      }
-
-      // 3. Usage Stats (Native Check via Android MethodChannel)
-      try {
-        final bool hasUsage = await const MethodChannel(
-              'overlay_channel',
-            ).invokeMethod('checkUsagePermission') ??
-            false;
-        if (!hasUsage) {
-          if (mounted) {
-            _showUsagePermissionDialog();
-          }
-        }
-      } catch (e) {
-        debugPrint("Usage Check Failed: $e");
-      }
-    }
-  }
-
-  void _showUsagePermissionDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text("Additional Permission Required"),
-        content: const Text(
-          "To show 'Suggested Apps', the app needs Usage Access.\n\nPlease find 'Gesture App' in the list and enable it.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Open Settings
-              ActionService.executeAction('settings', 'usage');
-            },
-            child: const Text("Open Settings"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Later"),
-          ),
-        ],
-      ),
-    );
   }
 
   void _toggleOverlay() async {

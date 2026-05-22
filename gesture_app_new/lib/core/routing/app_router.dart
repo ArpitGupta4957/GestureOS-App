@@ -7,6 +7,8 @@ import 'package:gesture_app/core/models/gesture_model.dart';
 import 'package:gesture_app/features/auth/screens/login_screen.dart';
 import 'package:gesture_app/features/auth/screens/register_screen.dart';
 import 'package:gesture_app/features/auth/screens/verification_screen.dart';
+import 'package:gesture_app/features/auth/screens/forgot_password_screen.dart';
+import 'package:gesture_app/features/auth/screens/reset_password_screen.dart';
 import 'package:gesture_app/features/dashboard/screens/dashboard_screen.dart';
 import 'package:gesture_app/features/gesture/screens/draw_gesture_screen.dart';
 import 'package:gesture_app/features/settings/screens/settings_screen.dart';
@@ -160,6 +162,19 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/pin-unlock',
         name: 'pin-unlock',
         builder: (context, state) => const PinUnlockScreen(),
+      ),
+      GoRoute(
+        path: '/forgot-password',
+        name: 'forgot-password',
+        builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+      GoRoute(
+        path: '/reset-password',
+        name: 'reset-password',
+        builder: (context, state) {
+          final identifier = state.extra as String? ?? '';
+          return ResetPasswordScreen(identifier: identifier);
+        },
       ),
     ],
   );

@@ -63,7 +63,7 @@ class _PinSetupScreenState extends ConsumerState<PinSetupScreen> {
           return StatefulBuilder(
             builder: (context, setDialogState) {
               return AlertDialog(
-                backgroundColor: const Color(0xFF2C2C2C),
+                backgroundColor: const Color(0xFF0D47A1),
                 title: const Text(
                   'Confirm Password',
                   style: TextStyle(color: Colors.white),
@@ -87,7 +87,7 @@ class _PinSetupScreenState extends ConsumerState<PinSetupScreen> {
                           labelText: 'Password',
                           labelStyle: TextStyle(color: Colors.white70),
                           enabledBorder: UnderlineInputBorder(
-                            borderSide: BorderSide(color: Colors.white24),
+                            borderSide: BorderSide(color: Colors.white38),
                           ),
                         ),
                         validator: (v) => v!.isEmpty ? 'Enter password' : null,
@@ -115,8 +115,7 @@ class _PinSetupScreenState extends ConsumerState<PinSetupScreen> {
 
                               if (!success) {
                                 // Show error in dialog
-                                final errorMsg =
-                                    ref.read(authProvider).error ??
+                                final errorMsg = ref.read(authProvider).error ??
                                     'Password verification failed';
                                 setDialogState(() => isSubmitting = false);
                                 if (context.mounted) {
@@ -199,16 +198,20 @@ class _PinSetupScreenState extends ConsumerState<PinSetupScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isConfirmStep = _isConfirming;
+    final backgroundColor =
+        isConfirmStep ? const Color(0xFF0D47A1) : theme.scaffoldBackgroundColor;
 
     // Using a simple 4 dots indicator
     final currentInput = _isConfirming ? _confirmPin : _pin;
     final message = _isConfirming ? 'Confirm your PIN' : 'Enter a 4-digit PIN';
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: backgroundColor,
       appBar: AppBar(
         title: const Text('Set Login PIN'),
-        backgroundColor: Colors.transparent,
+        backgroundColor:
+            isConfirmStep ? const Color(0xFF0D47A1) : Colors.transparent,
         elevation: 0,
         actions: [
           // If we already have a PIN, offer a way to remove it
@@ -230,44 +233,74 @@ class _PinSetupScreenState extends ConsumerState<PinSetupScreen> {
         ],
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            const SizedBox(height: 60),
-            Icon(
-              Icons.lock_outline,
-              size: 64,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(height: 24),
-            Text(message, style: theme.textTheme.headlineSmall),
-            const SizedBox(height: 48),
-            // Dots
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(4, (index) {
-                final isFilled = index < currentInput.length;
-                return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  width: 20,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isFilled
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.surfaceContainerHighest,
-                    border: Border.all(
-                      color: isFilled ? theme.colorScheme.primary : Colors.grey,
-                      width: 2,
-                    ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 60),
+                      Icon(
+                        Icons.lock_outline,
+                        size: 64,
+                        color: isConfirmStep
+                            ? Colors.white
+                            : theme.colorScheme.primary,
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        message,
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          color: isConfirmStep ? Colors.white : null,
+                        ),
+                      ),
+                      const SizedBox(height: 48),
+                      // Dots
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(4, (index) {
+                          final isFilled = index < currentInput.length;
+                          return Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 12),
+                            width: 20,
+                            height: 20,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isFilled
+                                  ? (isConfirmStep
+                                      ? Colors.white
+                                      : theme.colorScheme.primary)
+                                  : (isConfirmStep
+                                      ? Colors.white24
+                                      : theme
+                                          .colorScheme.surfaceContainerHighest),
+                              border: Border.all(
+                                color: isFilled
+                                    ? (isConfirmStep
+                                        ? Colors.white
+                                        : theme.colorScheme.primary)
+                                    : (isConfirmStep
+                                        ? Colors.white54
+                                        : Colors.grey),
+                                width: 2,
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                      const Spacer(),
+                      // Numpad
+                      _buildNumpad(),
+                      const SizedBox(height: 40),
+                    ],
                   ),
-                );
-              }),
-            ),
-            const Spacer(),
-            // Numpad
-            _buildNumpad(),
-            const SizedBox(height: 40),
-          ],
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

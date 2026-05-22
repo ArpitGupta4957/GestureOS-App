@@ -13,6 +13,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:gesture_app/core/database/database_helper.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:gesture_app/core/utils/gesture_recognizer.dart';
 import 'package:gesture_app/core/services/action_service.dart';
@@ -28,6 +29,11 @@ bool _isInitialized = false;
 final TextRecognizer _textRecognizer = TextRecognizer(
   script: TextRecognitionScript.latin,
 );
+
+// Configurable recognition delay (ms) - will be read from SharedPreferences
+int _recognitionDelayMs = 600;
+// Configurable action delay (ms) for background execution
+int _actionDelayMs = 0;
 
 /// Entry point for background Flutter engine
 @pragma('vm:entry-point')
@@ -73,6 +79,17 @@ Future<void> _initializeTemplates() async {
   if (_isInitialized) return;
 
   try {
+    // Load recognition delay from shared prefs (keeps parity with main app)
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _recognitionDelayMs =
+          prefs.getInt('recognition_delay') ?? _recognitionDelayMs;
+      _actionDelayMs = prefs.getInt('action_delay') ?? _actionDelayMs;
+      print(
+          '📦 [BackgroundService] recognitionDelay=${_recognitionDelayMs}ms actionDelay=${_actionDelayMs}ms');
+    } catch (e) {
+      print('⚠️ [BackgroundService] Failed to read prefs: $e');
+    }
     print('📦 [BackgroundService] Loading gestures from SQLite...');
     final db = DatabaseHelper();
     // Test DB Access
@@ -88,7 +105,9 @@ Future<void> _initializeTemplates() async {
     for (final gesture in gestures) {
       // Index text triggers
       if (gesture.triggerText != null && gesture.triggerText!.isNotEmpty) {
-        final normalized = gesture.triggerText!.trim().toLowerCase();
+        // Normalize stored trigger keys the same as OCR normalization
+        final normalized =
+            _normalizeForOCR(gesture.triggerText!.trim().toLowerCase());
         _textTriggerIndex[normalized] = GestureTemplate(
           name: gesture.name,
           points: [],
@@ -175,15 +194,16 @@ Future<dynamic> _handleMethodCall(MethodCall call) async {
 Future<String?> _recognizeText(List<List<Offset>> strokes) async {
   try {
     final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(recorder, const ui.Rect.fromLTWH(0, 0, 500, 500));
+    final canvas = ui.Canvas(recorder, const ui.Rect.fromLTWH(0, 0, 768, 768));
     final paint = ui.Paint()
       ..color = const ui.Color(0xFF000000)
-      ..strokeWidth = 5.0
+      ..strokeWidth = 14.0  // Thicker strokes → better ML Kit OCR accuracy
       ..style = ui.PaintingStyle.stroke
-      ..strokeCap = ui.StrokeCap.round;
+      ..strokeCap = ui.StrokeCap.round
+      ..strokeJoin = ui.StrokeJoin.round;
 
     canvas.drawRect(
-      const ui.Rect.fromLTWH(0, 0, 500, 500),
+      const ui.Rect.fromLTWH(0, 0, 768, 768),
       ui.Paint()..color = const ui.Color(0xFFFFFFFF),
     );
 
@@ -191,9 +211,9 @@ Future<String?> _recognizeText(List<List<Offset>> strokes) async {
     if (allPoints.isEmpty) return null;
 
     final boundingBox = GestureRecognizer.boundingBox(allPoints);
-    final scale = 400.0 / max(boundingBox.width, boundingBox.height);
-    final dx = 50.0 - (boundingBox.left * scale);
-    final dy = 50.0 - (boundingBox.top * scale);
+    final scale = 600.0 / max(boundingBox.width, boundingBox.height);
+    final dx = 84.0 - (boundingBox.left * scale);
+    final dy = 84.0 - (boundingBox.top * scale);
 
     for (var stroke in strokes) {
       final path = ui.Path();
@@ -206,7 +226,7 @@ Future<String?> _recognizeText(List<List<Offset>> strokes) async {
     }
 
     final picture = recorder.endRecording();
-    final img = await picture.toImage(500, 500);
+    final img = await picture.toImage(768, 768);
     final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) return null;
 
@@ -232,7 +252,6 @@ enum GestureIntent { text, shape }
 // --- MULTI-STROKE BUFFERING ---
 List<dynamic> _pendingFragments = [];
 Timer? _fragmentTimer;
-const Duration _fragmentTimeout = Duration(milliseconds: 1200);
 
 void _bufferGestureFragment(List<dynamic> newPoints) {
   if (newPoints.isEmpty) return;
@@ -247,10 +266,13 @@ void _bufferGestureFragment(List<dynamic> newPoints) {
   );
 
   _fragmentTimer?.cancel();
-  _fragmentTimer = Timer(_fragmentTimeout, () {
+  // Use the same recognition delay configured by the user (loaded from prefs)
+  final debounceMs = _recognitionDelayMs.clamp(100, 2000);
+  _fragmentTimer = Timer(Duration(milliseconds: debounceMs), () {
     print("✅ [BackgroundService] Trace finished. Processing...");
     final fullGesture = List.from(_pendingFragments);
     _pendingFragments.clear();
+    _fragmentTimer = null;
     _processGesture(fullGesture);
   });
 }
@@ -264,7 +286,7 @@ Future<void> _processGesture(List<dynamic> rawPoints) async {
   } catch (e) {
     print("⚠️ [BG] Failed to update input: $e");
   }
-  await Future.delayed(const Duration(seconds: 3));
+  await Future.delayed(Duration(milliseconds: _recognitionDelayMs));
 
   if (!_isInitialized) await _initializeTemplates();
 
@@ -274,7 +296,7 @@ Future<void> _processGesture(List<dynamic> rawPoints) async {
   }
 
   try {
-    // 1. PARSE STROKES
+    // 1. PARSE STROKES (Split by explicit {x:-1,y:-1} sentinel OR distance jumps)
     List<List<Offset>> strokes = [];
     List<Offset> currentStroke = [];
     List<Offset> flatPoints = [];
@@ -282,11 +304,26 @@ Future<void> _processGesture(List<dynamic> rawPoints) async {
     Offset? lastP;
     for (var p in rawPoints) {
       final map = Map<String, dynamic>.from(p as Map);
-      final currentP = Offset(
-        (map['x'] as num).toDouble(),
-        (map['y'] as num).toDouble(),
-      );
+      final rawX = (map['x'] as num).toDouble();
+      final rawY = (map['y'] as num).toDouble();
 
+      // --- BUG FIX: Detect explicit stroke separator sentinel {x:-1, y:-1} ---
+      // _bufferGestureFragment() inserts this map between strokes.
+      // Without this check the sentinel is treated as a real point at (-1,-1)
+      // which corrupts the bounding-box, producing garbage OCR / shape results.
+      if (rawX == -1.0 && rawY == -1.0) {
+        if (currentStroke.isNotEmpty) {
+          strokes.add(List.from(currentStroke));
+          currentStroke = [];
+        }
+        flatPoints.add(const Offset(-1, -1));
+        lastP = null; // Reset gap detector across explicit separators
+        continue;
+      }
+
+      final currentP = Offset(rawX, rawY);
+
+      // Also split on large distance jumps (native sometimes skips separator)
       bool isGap = false;
       if (lastP != null && (currentP - lastP).distance > 100.0) isGap = true;
 
@@ -329,7 +366,7 @@ Future<void> _processGesture(List<dynamic> rawPoints) async {
         String? bestKey;
         for (final key in _textTriggerIndex.keys) {
           int distance = _levenshteinDistance(normalized, key);
-          int tolerance = key.length > 4 ? 2 : (key.length >= 3 ? 1 : 0);
+          int tolerance = key.length > 4 ? 2 : (key.length >= 3 ? 2 : 0);
           if (distance <= tolerance && distance < bestDistance) {
             bestDistance = distance;
             bestKey = key;
@@ -344,6 +381,11 @@ Future<void> _processGesture(List<dynamic> rawPoints) async {
       if (template != null) {
         print("✅ [BG OCR] Trigger matched! Executing...");
         final meta = template.metadata!;
+        // Respect configured background action delay
+        if (_actionDelayMs > 0) {
+          print('⏳ [BG OCR] Waiting ${_actionDelayMs}ms before executing');
+          await Future.delayed(Duration(milliseconds: _actionDelayMs));
+        }
         await ActionService.executeAction(
           meta['actionType'] as String,
           meta['actionValue'] as String,
@@ -425,6 +467,11 @@ Future<void> _processGesture(List<dynamic> rawPoints) async {
               /* ignore */
             }
 
+            if (_actionDelayMs > 0) {
+              print(
+                  '⏳ [BG Shape] Waiting ${_actionDelayMs}ms before executing');
+              await Future.delayed(Duration(milliseconds: _actionDelayMs));
+            }
             await ActionService.executeAction(actionType, actionValue);
           } else {
             print(
@@ -485,9 +532,8 @@ Future<void> _handleTextTrigger(String text) async {
       int distance = _levenshteinDistance(normalized, key);
 
       // Dynamic Tolerance
-      int tolerance = 1;
+      int tolerance = key.length <= 3 ? 2 : 1;
       if (key.length > 4) tolerance = 2; // Allow 2 typos for long words
-      if (key.length < 4) tolerance = 0; // Short words strict
 
       if (distance <= tolerance && distance < bestDistance) {
         bestDistance = distance;

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:gesture_app/core/providers/auth_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PinUnlockScreen extends ConsumerStatefulWidget {
   const PinUnlockScreen({super.key});
@@ -29,8 +30,7 @@ class _PinUnlockScreenState extends ConsumerState<PinUnlockScreen> {
       final pinService = ref.read(pinServiceProvider);
       _isBiometricsEnabledPrefs = await pinService.isBiometricsEnabled();
       if (_isBiometricsEnabledPrefs) {
-        _canCheckBiometrics =
-            await _localAuth.canCheckBiometrics &&
+        _canCheckBiometrics = await _localAuth.canCheckBiometrics &&
             await _localAuth.isDeviceSupported();
       }
     } catch (e) {
@@ -102,8 +102,11 @@ class _PinUnlockScreenState extends ConsumerState<PinUnlockScreen> {
     }
   }
 
-  void _unlockApp() {
-    context.go('/dashboard');
+  Future<void> _unlockApp() async {
+    final prefs = await SharedPreferences.getInstance();
+    final seenPermissions = prefs.getBool('seen_permissions') ?? false;
+    if (!mounted) return;
+    context.go(seenPermissions ? '/dashboard' : '/permissions');
   }
 
   void _fallbackToPassword() {

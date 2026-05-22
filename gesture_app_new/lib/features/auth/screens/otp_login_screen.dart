@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gesture_app/core/providers/auth_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class OtpLoginScreen extends ConsumerStatefulWidget {
   const OtpLoginScreen({super.key});
@@ -66,9 +67,7 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
       return;
     }
 
-    final success = await ref
-        .read(authProvider.notifier)
-        .verifyOtp(
+    final success = await ref.read(authProvider.notifier).verifyOtp(
           _identifierController.text.trim(),
           _otpController.text.trim(),
         );
@@ -76,7 +75,9 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
     if (!mounted) return;
 
     if (success) {
-      context.go('/dashboard');
+      final prefs = await SharedPreferences.getInstance();
+      final seenPermissions = prefs.getBool('seen_permissions') ?? false;
+      context.go(seenPermissions ? '/dashboard' : '/permissions');
     } else {
       final error = ref.read(authProvider).error;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -91,9 +92,7 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
   Future<void> _handlePasswordLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final success = await ref
-        .read(authProvider.notifier)
-        .login(
+    final success = await ref.read(authProvider.notifier).login(
           identifier: _identifierController.text.trim(),
           password: _passwordController.text,
         );
@@ -101,7 +100,9 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
     if (!mounted) return;
 
     if (success) {
-      context.go('/dashboard');
+      final prefs = await SharedPreferences.getInstance();
+      final seenPermissions = prefs.getBool('seen_permissions') ?? false;
+      context.go(seenPermissions ? '/dashboard' : '/permissions');
     } else {
       final error = ref.read(authProvider).error;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -169,8 +170,8 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
                       _isOtpSent
                           ? 'Enter the code sent to your device'
                           : _usePasswordLogin
-                          ? 'Enter your credentials'
-                          : 'Enter your Email or Mobile Number',
+                              ? 'Enter your credentials'
+                              : 'Enter your Email or Mobile Number',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurface.withOpacity(0.7),
                       ),
@@ -200,11 +201,9 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
                           },
                         ),
                         const SizedBox(height: 24),
-
                         ElevatedButton(
-                          onPressed: authState.isLoading
-                              ? null
-                              : _handleSendOtp,
+                          onPressed:
+                              authState.isLoading ? null : _handleSendOtp,
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 16),
                           ),
@@ -260,9 +259,8 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
                         const SizedBox(height: 24),
 
                         ElevatedButton(
-                          onPressed: authState.isLoading
-                              ? null
-                              : _handleVerifyOtp,
+                          onPressed:
+                              authState.isLoading ? null : _handleVerifyOtp,
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 16),
                           ),
@@ -279,9 +277,8 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
 
                         const SizedBox(height: 16),
                         TextButton(
-                          onPressed: authState.isLoading
-                              ? null
-                              : _handleSendOtp,
+                          onPressed:
+                              authState.isLoading ? null : _handleSendOtp,
                           child: const Text('Resend OTP'),
                         ),
                       ],
@@ -310,7 +307,6 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
                         },
                       ),
                       const SizedBox(height: 16),
-
                       TextFormField(
                         controller: _passwordController,
                         obscureText: !_isPasswordVisible,
@@ -344,11 +340,9 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
                         },
                       ),
                       const SizedBox(height: 24),
-
                       ElevatedButton(
-                        onPressed: authState.isLoading
-                            ? null
-                            : _handlePasswordLogin,
+                        onPressed:
+                            authState.isLoading ? null : _handlePasswordLogin,
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
                         ),
@@ -361,6 +355,16 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
                                 ),
                               )
                             : const Text('LOGIN'),
+                      ),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: authState.isLoading
+                              ? null
+                              : () => context.go('/forgot-password'),
+                          child: const Text('Forgot Password?'),
+                        ),
                       ),
                     ],
 
@@ -379,9 +383,8 @@ class _OtpLoginScreenState extends ConsumerState<OtpLoginScreen> {
                           ),
                         ),
                         TextButton(
-                          onPressed: authState.isLoading
-                              ? null
-                              : _toggleLoginMode,
+                          onPressed:
+                              authState.isLoading ? null : _toggleLoginMode,
                           child: Text(
                             _usePasswordLogin
                                 ? 'Login with OTP'

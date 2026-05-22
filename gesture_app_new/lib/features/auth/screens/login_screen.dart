@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gesture_app/core/providers/auth_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -29,9 +30,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final success = await ref
-        .read(authProvider.notifier)
-        .login(
+    final success = await ref.read(authProvider.notifier).login(
           identifier: _identifierController.text.trim(),
           password: _isPinMode ? null : _passwordController.text,
           pin: _isPinMode ? _pinController.text : null,
@@ -40,7 +39,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (!mounted) return;
 
     if (success) {
-      context.go('/dashboard');
+      final prefs = await SharedPreferences.getInstance();
+      final seenPermissions = prefs.getBool('seen_permissions') ?? false;
+      context.go(seenPermissions ? '/dashboard' : '/permissions');
     } else {
       final error = ref.read(authProvider).error;
       ScaffoldMessenger.of(context).showSnackBar(

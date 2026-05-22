@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gesture_app/core/providers/auth_provider.dart';
@@ -43,20 +42,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
     _controller.forward();
 
-    // Navigate after animation
+    // Navigate after animation without asking for permissions before auth.
     Future.delayed(const Duration(seconds: 3), () async {
-      await _requestPermissions();
       _checkAuthAndNavigate();
     });
-  }
-
-  Future<void> _requestPermissions() async {
-    // STARTUP PERMISSIONS (As requested by user "then it should")
-    await [
-      Permission.contacts,
-      Permission.bluetoothConnect, // Android 12+
-      Permission.notification,
-    ].request();
   }
 
   Future<void> _checkAuthAndNavigate() async {
@@ -74,11 +63,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       return;
     }
 
+    final seenPermissions = prefs.getBool('seen_permissions') ?? false;
+
     // Check auth state
     final authState = ref.read(authProvider);
 
     if (authState.isAuthenticated) {
-      context.go('/dashboard');
+      context.go(seenPermissions ? '/dashboard' : '/permissions');
     } else {
       context.go('/login');
     }

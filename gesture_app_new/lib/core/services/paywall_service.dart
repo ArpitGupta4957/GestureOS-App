@@ -118,12 +118,14 @@ class _PaywallContent extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 24),
-          _buildPlanCard(context, ref, "Basic (Auto-Renewing)", "₹130 / month", 1, [
+          _buildPlanCard(
+              context, ref, "Basic (Auto-Renewing)", "₹130 / month", 1, [
             "Unlimited Gestures",
             "No Ads",
           ]),
           const SizedBox(height: 16),
-          _buildPlanCard(context, ref, "Premium (Auto-Renewing)", "₹649 / month", 3, [
+          _buildPlanCard(
+              context, ref, "Premium (Auto-Renewing)", "₹649 / month", 3, [
             "All Basic Features",
             "Bulk Dialer Access",
           ]),
@@ -142,13 +144,17 @@ class _PaywallContent extends ConsumerWidget {
         alignment: WrapAlignment.center,
         children: [
           TextButton(
-            onPressed: () => launchUrl(Uri.parse('https://servermine.com/privacy')),
-            child: const Text('Privacy Policy', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            onPressed: () =>
+                launchUrl(Uri.parse('https://servermine.com/privacy')),
+            child: const Text('Privacy Policy',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
           ),
           const Text('•', style: TextStyle(color: Colors.grey, height: 2.5)),
           TextButton(
-            onPressed: () => launchUrl(Uri.parse('https://servermine.com/terms')),
-            child: const Text('Terms of Use (EULA)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            onPressed: () =>
+                launchUrl(Uri.parse('https://servermine.com/terms')),
+            child: const Text('Terms of Use (EULA)',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
           ),
         ],
       ),
@@ -178,16 +184,21 @@ class _PaywallContent extends ConsumerWidget {
     if (Platform.isIOS) {
       try {
         String productId = 'com.gesture.basic130';
-        if (planId == 1) productId = 'com.gesture.basic130';
-        else if (planId == 2) productId = 'com.gesture.standard299';
-        else if (planId == 3) productId = 'com.gesture.premium649';
+        if (planId == 1) {
+          productId = 'com.gesture.basic130';
+        } else if (planId == 2)
+          productId = 'com.gesture.standard299';
+        else if (planId == 3)
+          productId = 'com.gesture.premium649';
         else if (planId == 4) productId = 'com.gesture.ultimate1299';
-        
+
         await ref.read(iapServiceProvider).buyPlan(productId);
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Purchase failed: $e'), backgroundColor: Colors.red),
+            SnackBar(
+                content: Text('Purchase failed: $e'),
+                backgroundColor: Colors.red),
           );
         }
       }

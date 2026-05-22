@@ -593,10 +593,12 @@ class OverlayService : Service(), SensorEventListener {
         }
         
         // --- 1. TEXT INPUT AREA (Top) ---
-        val inputContainer = FrameLayout(this)
+        // Use horizontal layout to place input and RUN button side-by-side
+        val inputContainer = LinearLayout(this)
+        inputContainer.orientation = LinearLayout.HORIZONTAL
         inputContainer.setPadding(dpToPx(20), dpToPx(50), dpToPx(20), dpToPx(20))
         inputContainer.setBackgroundColor(Color.parseColor("#222222")) // Dark Gray Header
-        
+
         inputField = EditText(this)
         inputField?.hint = "Type shortcut..."
         inputField?.setHintTextColor(Color.GRAY)
@@ -605,21 +607,48 @@ class OverlayService : Service(), SensorEventListener {
         inputField?.background = null // Remove underline
         inputField?.inputType = InputType.TYPE_CLASS_TEXT
         inputField?.imeOptions = EditorInfo.IME_ACTION_GO
-        
+
+        // When user presses keyboard GO/DONE, send trigger but keep expanded overlay open
         inputField?.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_DONE) {
                 val text = inputField?.text.toString()
                 if (text.isNotEmpty()) {
-                    sendTextTriggerToFlutter(text) // Corrected from processGesture
-                    showOverlay()
+                    sendTextTriggerToFlutter(text)
+                    // Keep overlay open so user can continue drawing or retry
                 }
                 true
             } else {
                 false
             }
         }
-        
-        inputContainer.addView(inputField)
+
+        // Layout params: input fills remaining space
+        val inputLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT)
+        inputLp.weight = 1f
+        inputContainer.addView(inputField, inputLp)
+
+        // RUN Button (sits to the right of input)
+        val runBtn = Button(this)
+        runBtn.text = "RUN"
+        runBtn.setTextColor(Color.WHITE)
+        val runBg = GradientDrawable()
+        runBg.cornerRadius = dpToPx(8).toFloat()
+        runBg.setColor(Color.parseColor("#00FF41"))
+        runBtn.background = runBg
+        runBtn.setPadding(dpToPx(14), dpToPx(10), dpToPx(14), dpToPx(10))
+        runBtn.setOnClickListener {
+            val text = inputField?.text?.toString() ?: ""
+            if (text.isNotEmpty()) {
+                sendTextTriggerToFlutter(text)
+                Toast.makeText(this, "Sent: $text", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Type a shortcut first", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        val runLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        runLp.setMargins(dpToPx(12), 0, 0, 0)
+        inputContainer.addView(runBtn, runLp)
         container.addView(inputContainer, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT

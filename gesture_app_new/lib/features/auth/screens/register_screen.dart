@@ -36,9 +36,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final success = await ref
-        .read(authProvider.notifier)
-        .register(
+    final success = await ref.read(authProvider.notifier).register(
           name: _nameController.text.trim(),
           email: _isEmailMode ? _emailController.text.trim() : null,
           mobileNumber: !_isEmailMode ? _mobileController.text.trim() : null,
@@ -57,10 +55,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       );
       // Navigate to verification based on mode
       if (_isEmailMode) {
-        // TODO: Email Verification Screen (Not implemented yet? Reusing Mobile for now or generic verify)
-        // Plan says: OTP works for both. Using verify-mobile route as generic verify for now?
-        // Let's stick to /verify-mobile path but maybe rename it or pass context
-        context.go('/verify-mobile', extra: _emailController.text.trim());
+        context.go('/verify-email', extra: _emailController.text.trim());
       } else {
         context.go('/verify-mobile', extra: _mobileController.text.trim());
       }

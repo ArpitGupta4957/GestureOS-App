@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gesture_app/core/providers/auth_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum VerificationType { mobile, email }
 
@@ -103,22 +104,29 @@ class _VerificationScreenState extends ConsumerState<VerificationScreen> {
       }
     }
 
-    final success = await ref
-        .read(authProvider.notifier)
-        .verifyOtp(target, otp);
+    final success =
+        await ref.read(authProvider.notifier).verifyOtp(target, otp);
 
     if (!mounted) return;
 
     if (success) {
       if (widget.type == VerificationType.mobile) {
         // Proceed to Email Verification
-        // Retrieve email from auth provider (updated after login/verify)
         final user = ref.read(authProvider).user;
         final email = user?.email ?? '';
         context.go('/verify-email', extra: email);
       } else {
-        // All done
-        context.go('/dashboard');
+        final prefs = await SharedPreferences.getInstance();
+        final seenOnboarding = prefs.getBool('seen_onboarding') ?? false;
+        final seenPermissions = prefs.getBool('seen_permissions') ?? false;
+
+        if (!seenOnboarding) {
+          context.go('/onboarding');
+        } else if (!seenPermissions) {
+          context.go('/permissions');
+        } else {
+          context.go('/dashboard');
+        }
       }
     } else {
       final error = ref.read(authProvider).error;
@@ -177,7 +185,6 @@ class _VerificationScreenState extends ConsumerState<VerificationScreen> {
               ),
             ),
             const SizedBox(height: 32),
-
             TextField(
               controller: _otpController,
               keyboardType: TextInputType.number,
@@ -191,7 +198,6 @@ class _VerificationScreenState extends ConsumerState<VerificationScreen> {
               ),
             ),
             const SizedBox(height: 24),
-
             ElevatedButton(
               onPressed: authState.isLoading ? null : _handleVerify,
               style: ElevatedButton.styleFrom(
@@ -206,11 +212,9 @@ class _VerificationScreenState extends ConsumerState<VerificationScreen> {
                   : Text('VERIFY ${isMobile ? "MOBILE" : "EMAIL"}'),
             ),
             const SizedBox(height: 16),
-
             TextButton(
-              onPressed: (authState.isLoading || _isResending)
-                  ? null
-                  : _sendOtp,
+              onPressed:
+                  (authState.isLoading || _isResending) ? null : _sendOtp,
               child: _isResending
                   ? const SizedBox(
                       height: 16,

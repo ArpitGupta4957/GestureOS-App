@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,9 +7,11 @@ import 'package:gesture_app/core/models/gesture_model.dart';
 import 'package:gesture_app/features/gesture/screens/action_picker_screen.dart';
 import 'package:gesture_app/core/utils/gesture_recognizer.dart';
 import 'package:gesture_app/core/services/overlay_service.dart';
+import 'package:gesture_app/core/services/action_service.dart';
 
 class DrawGestureScreen extends ConsumerStatefulWidget {
   final GestureModel? gestureToEdit;
+  final List<Offset>? preFilledPoints;
   final String? preSelectedActionType;
   final String? preSelectedActionValue;
   final String? preSelectedActionName;
@@ -18,6 +21,7 @@ class DrawGestureScreen extends ConsumerStatefulWidget {
   const DrawGestureScreen({
     super.key,
     this.gestureToEdit,
+    this.preFilledPoints,
     this.preSelectedActionType,
     this.preSelectedActionValue,
     this.preSelectedActionName,
@@ -42,6 +46,11 @@ class _DrawGestureScreenState extends ConsumerState<DrawGestureScreen> {
   late TextEditingController _triggerTextController;
   bool _isFavorite = false;
 
+  // --- Action-delay countdown state ---
+  Timer? _autoRunTimer;
+  int _countdownSeconds = 0;
+  bool _textEditedDuringCountdown = false;
+
   @override
   void initState() {
     super.initState();
@@ -62,13 +71,68 @@ class _DrawGestureScreenState extends ConsumerState<DrawGestureScreen> {
       _gestureName = widget.preSelectedActionName;
       _selectedContactId = widget.preSelectedContactId;
       _selectedLocalPhotoPath = widget.preSelectedLocalPhotoPath;
+    } else if (widget.preFilledPoints != null &&
+        widget.preFilledPoints!.isNotEmpty) {
+      // Initialize canvas with prefilled strokes from a mini-draw pad
+      _points.addAll(widget.preFilledPoints!);
+      _isDrawing = true;
+      // Trigger recognition and OCR on the prefilled strokes
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkGestureMatch();
+        _runOCR();
+      });
     }
   }
 
   @override
   void dispose() {
+    _autoRunTimer?.cancel();
     _triggerTextController.dispose();
     super.dispose();
+  }
+
+  // --- Countdown helpers ---
+
+  void _startAutoRunCountdown(String detectedText, int delayMs) {
+    _autoRunTimer?.cancel();
+    _textEditedDuringCountdown = false;
+    setState(() => _countdownSeconds = (delayMs / 1000).ceil());
+
+    _autoRunTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (_textEditedDuringCountdown || !mounted) {
+        timer.cancel();
+        if (mounted) setState(() => _countdownSeconds = 0);
+        return;
+      }
+      setState(() => _countdownSeconds--);
+      if (_countdownSeconds <= 0) {
+        timer.cancel();
+        _autoRunTimer = null;
+        final textToRun = _triggerTextController.text.trim();
+        if (textToRun.isNotEmpty && mounted) {
+          final executed = await OverlayService.triggerByText(textToRun);
+          if (mounted) {
+            if (executed) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text("✅ Executed: '$textToRun'"),
+                  backgroundColor: Colors.green,
+                ),
+              );
+              Future.delayed(const Duration(milliseconds: 600), () {
+                if (mounted) context.pop();
+              });
+            }
+          }
+        }
+      }
+    });
+  }
+
+  void _cancelAutoRun() {
+    _autoRunTimer?.cancel();
+    _autoRunTimer = null;
+    if (mounted) setState(() => _countdownSeconds = 0);
   }
 
   void _handleClear() {
@@ -142,8 +206,22 @@ class _DrawGestureScreenState extends ConsumerState<DrawGestureScreen> {
             ),
           );
 
-          // Execute Action - REMOVED per user request
-          // await ActionService.executeAction(actionType, actionValue);
+          // Execute Action: run the assigned action for this gesture
+          try {
+            await ActionService.executeAction(
+                actionType as String, actionValue as String);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('🚀 Executed: ${result.name}'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(milliseconds: 900),
+                ),
+              );
+            }
+          } catch (e) {
+            debugPrint('Execute action failed: $e');
+          }
         }
       }
     }
@@ -467,10 +545,13 @@ class _DrawGestureScreenState extends ConsumerState<DrawGestureScreen> {
   }
 
   // --- OCR HELPER ---
-  Future<void> _runOCR() async {
-    if (_points.isEmpty) return;
+  /// Returns true if OCR detected text (regardless of trigger match).
+  /// When true, shape matching should be skipped for this stroke.
+  Future<bool> _runOCR() async {
+    if (_points.isEmpty) return false;
 
     setState(() => _isRecognizing = true);
+    bool textDetected = false;
 
     try {
       // Convert points to strokes (SPLIT by -1,-1 separator)
@@ -487,33 +568,98 @@ class _DrawGestureScreenState extends ConsumerState<DrawGestureScreen> {
           currentStroke.add(p);
         }
       }
-      // Add last pending stroke if no separator at end
-      if (currentStroke.isNotEmpty) {
-        strokes.add(currentStroke);
-      }
+      if (currentStroke.isNotEmpty) strokes.add(currentStroke);
 
-      // Call the PUBLIC static method from OverlayService
       final detectedText = await OverlayService.recognizeText(strokes);
 
       if (detectedText != null && detectedText.isNotEmpty) {
         debugPrint("✨ [OCR] Auto-detected: $detectedText");
+        textDetected = true;
+
         if (mounted) {
-          setState(() {
-            _triggerTextController.text = detectedText;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("✨ Auto-detected: '$detectedText'"),
-              duration: const Duration(milliseconds: 1500),
-              backgroundColor: Theme.of(context).colorScheme.primary,
-            ),
-          );
+          // Show detected text immediately in the text field
+          setState(() => _triggerTextController.text = detectedText);
+        }
+
+        final delayMs = OverlayService.actionDelayMs;
+
+        if (delayMs >= 1000) {
+          // Start visible countdown — user can edit text during this window
+          if (mounted) {
+            ScaffoldMessenger.of(context).clearSnackBars();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text("✨ Detected: '$detectedText' — editing allowed"),
+                duration: const Duration(milliseconds: 1200),
+                backgroundColor: Theme.of(context).colorScheme.primary,
+              ),
+            );
+          }
+          _startAutoRunCountdown(detectedText, delayMs);
+        } else {
+          // No significant delay — execute immediately
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text("✨ Auto-detected: '$detectedText'"),
+                duration: const Duration(milliseconds: 1200),
+                backgroundColor: Theme.of(context).colorScheme.primary,
+              ),
+            );
+          }
+          try {
+            final executed = await OverlayService.triggerByText(detectedText);
+            if (executed) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text("✅ Executed shortcut: '$detectedText'"),
+                    backgroundColor: Colors.green,
+                    duration: const Duration(milliseconds: 1000),
+                  ),
+                );
+                Future.delayed(const Duration(milliseconds: 600), () {
+                  if (mounted) context.pop();
+                });
+              }
+            } else {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      "📝 Detected '$detectedText' — no shortcut found.\nDraw a shape or save this as a text trigger.",
+                    ),
+                    backgroundColor: Colors.orange.shade700,
+                    duration: const Duration(seconds: 3),
+                  ),
+                );
+              }
+            }
+          } catch (e) {
+            debugPrint('Error attempting to trigger overlay action: $e');
+          }
         }
       }
     } catch (e) {
       debugPrint("OCR Error: $e");
     } finally {
       if (mounted) setState(() => _isRecognizing = false);
+    }
+    return textDetected;
+  }
+
+  /// Handles onPanEnd: runs OCR first, only runs shape match if OCR found nothing.
+  /// This prevents letter strokes from being mismatched as shape gestures (e.g. VS→SM).
+  Future<void> _handlePanEnd() async {
+    setState(() {
+      _isDrawing = true;
+      _points.add(const Offset(-1.0, -1.0));
+    });
+    // OCR first — if it detects text, skip shape matching entirely
+    final bool textDetected = await _runOCR();
+    if (!textDetected) {
+      // No text found → safe to run shape/gesture recognition
+      await _checkGestureMatch();
     }
   }
 
@@ -619,16 +765,9 @@ class _DrawGestureScreenState extends ConsumerState<DrawGestureScreen> {
                                   });
                                 },
                                 onPanEnd: () {
-                                  setState(() {
-                                    _isDrawing =
-                                        true; // Signals we have drawn something
-                                    // ADD SEPARATOR for Multi-Stroke
-                                    _points.add(const Offset(-1.0, -1.0));
-                                  });
-                                  // Trigger recognition check (Shape)
-                                  _checkGestureMatch();
-                                  // Trigger OCR (Text) - Auto-fill text trigger
-                                  _runOCR();
+                                  // Fire-and-forget async handler:
+                                  // OCR runs first, shape only if OCR finds nothing
+                                  _handlePanEnd();
                                 },
                                 gridColor:
                                     theme.colorScheme.primary.withOpacity(0.1),
@@ -685,52 +824,210 @@ class _DrawGestureScreenState extends ConsumerState<DrawGestureScreen> {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          TextField(
-                            controller: _triggerTextController,
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurface,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            textAlign: TextAlign.center,
-                            decoration: InputDecoration(
-                              labelText: 'Text Shortcut (Optional)',
-                              hintText: 'e.g., call mom',
-                              prefixIcon: const Icon(
-                                Icons.keyboard_alt_rounded,
-                              ),
-                              filled: true,
-                              fillColor: theme
-                                  .colorScheme.surfaceContainerHighest
-                                  .withOpacity(0.3),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(
-                                  color: theme.colorScheme.primary.withOpacity(
-                                    0.5,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _triggerTextController,
+                                  style: TextStyle(
+                                    color: theme.colorScheme.onSurface,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                ),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(
-                                  color: theme.colorScheme.primary,
-                                ),
-                              ),
-                              suffixIcon: _triggerTextController.text.isNotEmpty
-                                  ? IconButton(
-                                      icon: const Icon(Icons.clear, size: 18),
-                                      onPressed: () => setState(
-                                        () => _triggerTextController.clear(),
+                                  textAlign: TextAlign.center,
+                                  decoration: InputDecoration(
+                                    labelText: 'Text Shortcut (Optional)',
+                                    hintText: 'e.g., call mom',
+                                    prefixIcon: const Icon(
+                                      Icons.keyboard_alt_rounded,
+                                    ),
+                                    filled: true,
+                                    fillColor: theme
+                                        .colorScheme.surfaceContainerHighest
+                                        .withOpacity(0.3),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide(
+                                        color: theme.colorScheme.primary
+                                            .withOpacity(
+                                          0.5,
+                                        ),
                                       ),
-                                    )
-                                  : null,
-                            ),
-                            onChanged: (text) {
-                              setState(() {});
-                            },
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide(
+                                        color: theme.colorScheme.primary,
+                                      ),
+                                    ),
+                                    suffixIcon:
+                                        _triggerTextController.text.isNotEmpty
+                                            ? IconButton(
+                                                icon: const Icon(Icons.clear,
+                                                    size: 18),
+                                                onPressed: () => setState(
+                                                  () => _triggerTextController
+                                                      .clear(),
+                                                ),
+                                              )
+                                            : null,
+                                  ),
+                                  onChanged: (text) {
+                                    setState(() {});
+                                    // If user edits text during countdown, cancel auto-run
+                                    // and require them to click RUN manually
+                                    if (_countdownSeconds > 0) {
+                                      _textEditedDuringCountdown = true;
+                                      _cancelAutoRun();
+                                    }
+                                  },
+                                  onSubmitted: (_) async {
+                                    // Submit via keyboard: attempt trigger regardless of drawn points
+                                    if (_triggerTextController.text
+                                        .trim()
+                                        .isNotEmpty) {
+                                      try {
+                                        final executed =
+                                            await OverlayService.triggerByText(
+                                                _triggerTextController.text
+                                                    .trim());
+                                        if (executed) {
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                    "✅ Executed: '${_triggerTextController.text.trim()}'"),
+                                                backgroundColor: Colors.green,
+                                              ),
+                                            );
+                                            Future.delayed(
+                                                const Duration(
+                                                    milliseconds: 600), () {
+                                              if (mounted) context.pop();
+                                            });
+                                          }
+                                        } else {
+                                          if (mounted)
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                  content: Text(
+                                                      "No shortcut found for '${_triggerTextController.text.trim()}'")),
+                                            );
+                                        }
+                                      } catch (e) {
+                                        debugPrint('Error triggering text: $e');
+                                      }
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              ElevatedButton.icon(
+                                onPressed: (_triggerTextController.text
+                                        .trim()
+                                        .isEmpty)
+                                    ? null
+                                    : () async {
+                                        final text =
+                                            _triggerTextController.text.trim();
+                                        try {
+                                          final executed = await OverlayService
+                                              .triggerByText(text);
+                                          if (executed) {
+                                            if (mounted) {
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                      "✅ Executed shortcut: '$text'"),
+                                                  backgroundColor: Colors.green,
+                                                ),
+                                              );
+                                              Future.delayed(
+                                                  const Duration(
+                                                      milliseconds: 600), () {
+                                                if (mounted) context.pop();
+                                              });
+                                            }
+                                          } else {
+                                            if (mounted)
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                    content: Text(
+                                                        "No shortcut found for '$text'")),
+                                              );
+                                          }
+                                        } catch (e) {
+                                          debugPrint('Run button error: $e');
+                                        }
+                                      },
+                                icon: const Icon(Icons.play_arrow_rounded),
+                                label: const Text('RUN'),
+                                style: ElevatedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 8),
+
+                          // --- AUTO-RUN COUNTDOWN STRIP ---
+                          if (_countdownSeconds > 0)
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primary
+                                    .withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                    color: theme.colorScheme.primary
+                                        .withValues(alpha: 0.4)),
+                              ),
+                              child: Row(
+                                children: [
+                                  // Animated countdown icon
+                                  SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      value: _countdownSeconds /
+                                          (OverlayService.actionDelayMs / 1000)
+                                              .ceil(),
+                                      strokeWidth: 3,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      'Auto-running in $_countdownSeconds s\u2026  Edit text above to cancel.',
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                              color:
+                                                  theme.colorScheme.primary),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: _cancelAutoRun,
+                                    style: TextButton.styleFrom(
+                                        foregroundColor: Colors.redAccent,
+                                        padding: EdgeInsets.zero,
+                                        minimumSize: const Size(60, 32)),
+                                    child: const Text('Cancel'),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                          const SizedBox(height: 8),
                           // ACTION BUTTONS ROW (Clear & Save)
                           Row(
                             children: [

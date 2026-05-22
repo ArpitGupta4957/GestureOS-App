@@ -4,6 +4,7 @@ import 'package:gesture_app/features/bulk_dialer/providers/bulk_dialer_provider.
 import 'package:gesture_app/features/bulk_dialer/screens/widgets/dialer_list_view.dart';
 import 'package:gesture_app/features/bulk_dialer/screens/widgets/input_sources_widget.dart';
 import 'package:gesture_app/features/bulk_dialer/models/bulk_dialer_models.dart';
+import 'package:gesture_app/features/gesture/screens/draw_gesture_screen.dart';
 import 'package:gesture_app/core/services/paywall_service.dart';
 import 'package:gesture_app/core/services/trial_usage_service.dart';
 import 'package:gesture_app/core/services/subscription_service.dart';
@@ -97,12 +98,24 @@ class _BulkDialerScreenState extends ConsumerState<BulkDialerScreen> {
     return Scaffold(
       floatingActionButton: FloatingActionButton.small(
         heroTag: 'mydial_draw',
-        onPressed: () {
-          // Navigate to draw gesture screen from MyDial tab
-          Navigator.push(
+        onPressed: () async {
+          // Navigate to mini draw pad and await strokes
+          final strokes = await Navigator.push<List<Offset>>(
             context,
             MaterialPageRoute(builder: (_) => const _MiniDrawPad()),
           );
+
+          if (strokes != null && strokes.isNotEmpty) {
+            // Forward strokes to the full DrawGestureScreen for naming/action selection
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (ctx) => DrawGestureScreen(
+                  preFilledPoints: strokes,
+                ),
+              ),
+            );
+          }
         },
         backgroundColor: theme.colorScheme.primary,
         tooltip: 'Quick Draw',

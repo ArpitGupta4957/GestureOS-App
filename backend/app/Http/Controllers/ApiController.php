@@ -662,7 +662,7 @@ class ApiController extends Controller
             $user = User::where('email', $identifier)->first();
             if (!$user) return response()->json(['success' => false, 'message' => 'User not found.'], 404);
 
-            if ($user->otp_code === $otp && $user->otp_expires_at && now()->lt($user->otp_expires_at)) {
+            if (hash_equals((string)$user->otp_code, (string)$otp) && $user->otp_expires_at && now()->lt($user->otp_expires_at)) {
                 // Valid OTP
                 $user->otp_code = null;
                 $user->otp_expires_at = null;

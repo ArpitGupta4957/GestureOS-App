@@ -31,6 +31,9 @@ class OverlayService {
   static int _strictness = 1;
   static int get strictness => _strictness;
 
+  // Expose action delay so UI can show countdown
+  static int get actionDelayMs => _actionDelayMs;
+
   // --- HYBRID RECOGNITION STATE ---
   static final TextRecognizer _textRecognizer = TextRecognizer(
     script: TextRecognitionScript.latin,
@@ -97,7 +100,9 @@ class OverlayService {
 
       // 1. Index Text Trigger (if present)
       if (gesture.triggerText != null && gesture.triggerText!.isNotEmpty) {
-        final normalizedTrigger = gesture.triggerText!.trim().toLowerCase();
+        // Normalize trigger key the same way OCR normalizes input so lookups match
+        final normalizedTrigger =
+            _normalizeForOCR(gesture.triggerText!.trim().toLowerCase());
 
         // Create a template logic wrapper
         final template = GestureTemplate(
@@ -191,10 +196,9 @@ class OverlayService {
       int bestDistance = 99;
       String? bestKey;
 
-      // Determine Allowed Errors based on Token Length & Strictness
-      // Strictness 0: Allow 2 errors usually.
-      // Strictness 1: Allow 1 error.
-      // Short words (<4 chars) always stricter.
+      // Determine Allowed Errors based on Token Length & Strictness.
+      // Short aliases need slightly more forgiveness in low/medium modes,
+      // otherwise handwriting OCR frequently misses 3-letter shortcuts.
 
       for (final key in _textTriggerIndex.keys) {
         // Calculate Levenshtein Distance
@@ -202,12 +206,10 @@ class OverlayService {
 
         // Dynamic Tolerance Threshold
         int tolerance = 1; // Default
-        if (_strictness == 0 && key.length > 4) {
-          tolerance = 2; // Allow 2 typos for long words
-        }
-        if (key.length < 4) {
-          tolerance =
-              0; // Short words must match exactly (prevent 'hi' triggering 'ha')
+        if (_strictness == 0) {
+          tolerance = key.length <= 4 ? 2 : 2;
+        } else if (_strictness == 1) {
+          tolerance = key.length <= 3 ? 2 : 1;
         }
 
         if (distance <= tolerance && distance < bestDistance) {
@@ -243,12 +245,15 @@ class OverlayService {
       await _updateNativeInput("✅ Found: ${template.name}");
       await Future.delayed(const Duration(milliseconds: 1500));
 
-      // 3. PROFESSIONAL SEQUENCE: Executing
+      // 3. PROFESSIONAL SEQUENCE: Executing (delegated to delayed executor)
       await _updateNativeInput("🚀 ${template.name} → $actionValue");
-      await ActionService.executeAction(actionType, actionValue);
-
-      // Clean up wait
-      await Future.delayed(const Duration(seconds: 1));
+      await _executeWithDelay(
+        actionType,
+        actionValue,
+        template.name,
+        detectionMethod: 'text',
+        detectedValue: input,
+      );
       HapticFeedback.mediumImpact();
       return true;
     } else {
@@ -399,6 +404,12 @@ class OverlayService {
     SharedPreferences.getInstance().then((prefs) {
       prefs.setInt('recognition_delay', _recognitionDelayMs);
     });
+    // Reuse existing native bridge hook to refresh running background templates/config.
+    if (Platform.isAndroid) {
+      _channel.invokeMethod('refreshBackgroundGestures').catchError((e) {
+        debugPrint('⚠️ Failed to refresh background gestures: $e');
+      });
+    }
   }
 
   static void setActionDelay(int ms) {
@@ -407,6 +418,11 @@ class OverlayService {
     SharedPreferences.getInstance().then((prefs) {
       prefs.setInt('action_delay', _actionDelayMs);
     });
+    if (Platform.isAndroid) {
+      _channel.invokeMethod('refreshBackgroundGestures').catchError((e) {
+        debugPrint('⚠️ Failed to refresh background gestures: $e');
+      });
+    }
   }
 
   static void _bufferGestureFragment(List<dynamic> newPoints) {
@@ -434,7 +450,9 @@ class OverlayService {
     _fragmentTimer = Timer(const Duration(milliseconds: 100), () {
       debugPrint("✅ [OverlayService] Processing gesture immediately...");
       final fullGesture = List.from(_pendingFragments);
+      // Clear immediately so a fast second gesture doesn't inherit old strokes
       _pendingFragments.clear();
+      _fragmentTimer = null;
       _processGesture(fullGesture);
     });
   }
@@ -545,16 +563,17 @@ class OverlayService {
       // A. Create Canvas
       final recorder = ui.PictureRecorder();
       final canvas =
-          ui.Canvas(recorder, const ui.Rect.fromLTWH(0, 0, 500, 500));
+          ui.Canvas(recorder, const ui.Rect.fromLTWH(0, 0, 768, 768));
       final paint = ui.Paint()
         ..color = const ui.Color(0xFF000000) // Black Ink
-        ..strokeWidth = 5.0
+        ..strokeWidth = 14.0  // Thicker strokes → better ML Kit OCR accuracy
         ..style = ui.PaintingStyle.stroke
-        ..strokeCap = ui.StrokeCap.round;
+        ..strokeCap = ui.StrokeCap.round
+        ..strokeJoin = ui.StrokeJoin.round;
 
       // Fill White BG
       canvas.drawRect(
-        const ui.Rect.fromLTWH(0, 0, 500, 500),
+        const ui.Rect.fromLTWH(0, 0, 768, 768),
         ui.Paint()..color = const ui.Color(0xFFFFFFFF),
       );
 
@@ -563,9 +582,9 @@ class OverlayService {
       if (allPoints.isEmpty) return null;
 
       final boundingBox = GestureRecognizer.boundingBox(allPoints);
-      final scale = 400.0 / max(boundingBox.width, boundingBox.height);
-      final dx = 50.0 - (boundingBox.left * scale); // Padding 50
-      final dy = 50.0 - (boundingBox.top * scale);
+      final scale = 600.0 / max(boundingBox.width, boundingBox.height);
+      final dx = 84.0 - (boundingBox.left * scale); // Padding 84
+      final dy = 84.0 - (boundingBox.top * scale);
 
       for (var stroke in strokes) {
         final path = ui.Path();
@@ -579,7 +598,7 @@ class OverlayService {
 
       // C. Save to Image
       final picture = recorder.endRecording();
-      final img = await picture.toImage(500, 500);
+      final img = await picture.toImage(768, 768);
       final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) return null;
 
@@ -606,9 +625,9 @@ class OverlayService {
   static Future<void> _processGesture(List<dynamic> rawPoints) async {
     debugPrint("🎨 [OverlayService] Processing Hybrid Gesture...");
 
-    // 1. PROFESSIONAL SEQUENCE START: Scanning
+    // 1. PROFESSIONAL SEQUENCE START: Scanning - respect configured recognition delay
     await _updateNativeInput("Scanning...");
-    await Future.delayed(const Duration(seconds: 3));
+    await Future.delayed(Duration(milliseconds: _recognitionDelayMs));
 
     if (_templates.isEmpty && _textTriggerIndex.isEmpty) {
       debugPrint("❌ [OverlayService] CRITICAL: No templates or text triggers!");
@@ -620,7 +639,7 @@ class OverlayService {
     }
 
     try {
-      // 1. PARSE STROKES (Split by -1,-1 or distance jumps)
+      // 1. PARSE STROKES (Split by explicit {x:-1,y:-1} sentinel OR distance jumps)
       List<List<Offset>> strokes = [];
       List<Offset> currentStroke = [];
       List<Offset> flatPoints = [];
@@ -628,12 +647,26 @@ class OverlayService {
       Offset? lastP;
       for (var p in rawPoints) {
         final map = Map<String, dynamic>.from(p as Map);
-        final currentP = Offset(
-          (map['x'] as num).toDouble(),
-          (map['y'] as num).toDouble(),
-        );
+        final rawX = (map['x'] as num).toDouble();
+        final rawY = (map['y'] as num).toDouble();
 
-        // Check for explicit separator (if Native sends it) OR Distance Jump
+        // --- BUG FIX: Detect explicit stroke separator sentinel {x:-1, y:-1} ---
+        // _bufferGestureFragment() inserts this map between strokes.
+        // Without this check the sentinel is treated as a real point at (-1,-1)
+        // which corrupts the bounding-box and produces garbage OCR/shape results.
+        if (rawX == -1.0 && rawY == -1.0) {
+          if (currentStroke.isNotEmpty) {
+            strokes.add(List.from(currentStroke));
+            currentStroke = [];
+          }
+          flatPoints.add(const Offset(-1, -1));
+          lastP = null; // Reset gap detector across explicit separators
+          continue;
+        }
+
+        final currentP = Offset(rawX, rawY);
+
+        // Also split on large distance jumps (native sometimes skips separator)
         bool isGap = false;
         if (lastP != null && (currentP - lastP).distance > 100.0) {
           isGap = true;
@@ -643,7 +676,7 @@ class OverlayService {
           if (currentStroke.isNotEmpty) strokes.add(List.from(currentStroke));
           currentStroke = [];
 
-          // Also add separate to flatPoints for $1 recognizer
+          // Also add separator to flatPoints for $1 recognizer
           flatPoints.add(const Offset(-1, -1));
         }
 
@@ -669,14 +702,9 @@ class OverlayService {
         // #5: Immediately write detected text to the native text box
         await _updateNativeInput(ocrResult);
 
-        // #5: Wait 5 seconds for user to edit the text before executing
-        // Show countdown feedback
-        for (int i = 5; i > 0; i--) {
-          await Future.delayed(const Duration(seconds: 1));
-          // Re-read the current text from native input (user may have edited)
-          // Since we can't read back, we use the original OCR text
-          await _updateNativeInput("$ocrResult (${i}s)");
-        }
+        // Small grace pause to flush UI, then attempt trigger. Action delay
+        // (if configured) will be applied by triggerByText/_executeWithDelay.
+        await Future.delayed(const Duration(milliseconds: 500));
 
         // Now try to match against text triggers
         if (await triggerByText(ocrResult)) {
